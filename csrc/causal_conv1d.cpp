@@ -131,6 +131,7 @@ at::Tensor
 causal_conv1d_fwd(const at::Tensor &x, const at::Tensor &weight,
                   const c10::optional<at::Tensor> &bias_,
                   const c10::optional<at::Tensor> &seq_idx_,
+                  const c10::optional<at::Tensor> &seq_pos_idx_,
                   const c10::optional<at::Tensor> &initial_states_,
                   c10::optional<at::Tensor> &final_states_out_,
                   bool silu_activation) {
@@ -176,7 +177,13 @@ causal_conv1d_fwd(const at::Tensor &x, const at::Tensor &weight,
         TORCH_CHECK(seq_idx.is_contiguous());
         CHECK_SHAPE(seq_idx, batch_size, seqlen);
     }
-
+    if (seq_pos_idx_.has_value()) {
+        auto seq_pos_idx = seq_pos_idx_.value();
+        TORCH_CHECK(seq_pos_idx.scalar_type() == torch::kInt32);
+        TORCH_CHECK(seq_pos_idx.is_cuda());
+        TORCH_CHECK(seq_pos_idx.is_contiguous());
+        CHECK_SHAPE(seq_pos_idx, batch_size, seqlen);
+    }
     at::Tensor out = torch::empty_like(x);
 
     ConvParamsBase params;
@@ -190,6 +197,11 @@ causal_conv1d_fwd(const at::Tensor &x, const at::Tensor &weight,
         params.seq_idx_ptr = nullptr;
     }
 
+    if (seq_pos_idx_.has_value()) {
+        params.seq_pos_idx_ptr = seq_pos_idx_.value().data_ptr();
+    } else {
+        params.seq_pos_idx_ptr = nullptr;
+    }
     if (initial_states_.has_value()) {
         TORCH_CHECK(is_channel_last, "initial_states is only supported for channel last layout");
         auto initial_states = initial_states_.value();
@@ -241,6 +253,7 @@ causal_conv1d_bwd(const at::Tensor &x, const at::Tensor &weight,
                   const c10::optional<at::Tensor> &bias_,
                   at::Tensor &dout,
                   const c10::optional<at::Tensor> &seq_idx_,
+                  const c10::optional<at::Tensor> &seq_pos_idx_,
                   const c10::optional<at::Tensor> &initial_states_,
                   const c10::optional<at::Tensor> &dfinal_states_,
                   c10::optional<at::Tensor> &dx_,
@@ -294,6 +307,13 @@ causal_conv1d_bwd(const at::Tensor &x, const at::Tensor &weight,
         TORCH_CHECK(seq_idx.is_contiguous());
         CHECK_SHAPE(seq_idx, batch_size, seqlen);
     }
+    if (seq_pos_idx_.has_value()) {
+        auto seq_pos_idx = seq_pos_idx_.value();
+        TORCH_CHECK(seq_pos_idx.scalar_type() == torch::kInt32);
+        TORCH_CHECK(seq_pos_idx.is_cuda());
+        TORCH_CHECK(seq_pos_idx.is_contiguous());
+        CHECK_SHAPE(seq_pos_idx, batch_size, seqlen);
+    }
 
     at::Tensor dx;
     if (dx_.has_value()) {
@@ -325,6 +345,11 @@ causal_conv1d_bwd(const at::Tensor &x, const at::Tensor &weight,
         params.seq_idx_ptr = seq_idx_.value().data_ptr();
     } else {
         params.seq_idx_ptr = nullptr;
+    }
+    if (seq_pos_idx_.has_value()) {
+        params.seq_pos_idx_ptr = seq_pos_idx_.value().data_ptr();
+    } else {
+        params.seq_pos_idx_ptr = nullptr;
     }
 
     if (initial_states_.has_value()) {
@@ -445,3 +470,4 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("causal_conv1d_bwd", &causal_conv1d_bwd, "Causal conv1d backward");
     m.def("causal_conv1d_update", &causal_conv1d_update, "Causal conv1d update");
 }
+//

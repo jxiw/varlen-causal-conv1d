@@ -34,6 +34,7 @@ struct ConvParamsBase {
     void *__restrict__ conv_state_ptr;
 
     void *__restrict__ seq_idx_ptr;
+    void *__restrict__ seq_pos_idx_ptr;
 
     // No __restrict__ since initial_states could be the same as final_states.
     void * initial_states_ptr;
