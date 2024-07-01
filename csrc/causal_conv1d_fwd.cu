@@ -94,14 +94,14 @@ void causal_conv1d_fwd_kernel(ConvParamsBase params) {
         if constexpr(kIsVecLoad) {
             Ktraits::BlockLoadVecT(smem_load_vec).Load(reinterpret_cast<vec_t*>(x), *reinterpret_cast<vec_t (*)[1]>(&x_vals_load[kNElts]), (params.seqlen - chunk * kChunkSize) / kNElts);
             if (kHasSeqPosIdx)
-                Ktraits::BlockLoadIndexVecT(smem_load_index_vec).Load(reinterpret_cast<int4*>(seq_pos_idx), *reinterpret_cast<int4(*)[Ktraits::kNLoadsIndex]>(seq_pos_idx_load), (params.seqlen - chunk * kChunkSize) / kNElts);
-        } else {
+                Ktraits::BlockLoadIndexVecT(smem_load_index_vec).Load(reinterpret_cast<int4*>(seq_pos_idx), *reinterpret_cast<int4(*)[Ktraits::kNLoadsIndex]>(seq_pos_idx_load), (params.seqlen - chunk * kChunkSize) / kNElts * Ktraits::kNLoadsIndex);
+        } else {                                                      
             __syncthreads();
             Ktraits::BlockLoadT(smem_load).Load(x, *reinterpret_cast<input_t (*)[kNElts]>(&x_vals_load[kNElts]), params.seqlen - chunk * kChunkSize);
             if (kHasSeqPosIdx)
                 Ktraits::BlockLoadIndexT(smem_load_index).Load(seq_pos_idx, seq_pos_idx_load, (params.seqlen - chunk * kChunkSize), 0);
         }
-        x += kChunkSize;
+               x += kChunkSize;
         if (kHasSeqPosIdx)   seq_pos_idx += kChunkSize;
         __syncthreads();
         // Thread kNThreads - 1 don't write yet, so that thread 0 can read

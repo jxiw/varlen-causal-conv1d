@@ -46,7 +46,7 @@ struct Causal_conv1d_bwd_kernel_traits {
                     sizeof(typename BlockLoadIndexVecT::TempStorage)});
     static constexpr int kSmemExchangeSize = kNThreads * kNBytes * kNElts * (1 + (kSiluAct ? kNExchangeRounds : 0) + (kHasSeqPosIdx ? kNExchangeRounds : 0));
     static constexpr int kSmemSize = std::max({kSmemExchangeSize,
-            int(sizeof(typename BlockReduceFloatT::TempStorage))}) + (kIsVecLoad ? 0 : kSmemIOSize);
+            int(sizeof(typename BlockReduceFloatT::TempStorage))}) + kSmemIOSize;
 };
 
 template<typename Ktraits, bool kHasSeqPosIdx>
@@ -89,9 +89,9 @@ void causal_conv1d_bwd_kernel(ConvParamsBwd params) {
     float *dweight = reinterpret_cast<float *>(params.dweight_ptr) + dim_id * params.dweight_c_stride;
     float bias_val = params.bias_ptr == nullptr ? 0.f : float(reinterpret_cast<weight_t *>(params.bias_ptr)[dim_id]);
     int *seq_pos_idx = !kHasSeqPosIdx ? nullptr : reinterpret_cast<int *>(params.seq_pos_idx_ptr) + batch_id * params.seqlen;
-
     // Thread kNThreads - 1 will load the first elements of the next chunk so we initialize those to 0.
     if (tidx == 0) {
+        
         if constexpr (!kSiluAct) {
             input_t zeros[kNElts] = {0};
             smem_exchange[0] = reinterpret_cast<vec_t *>(zeros)[0];
@@ -110,11 +110,11 @@ void causal_conv1d_bwd_kernel(ConvParamsBwd params) {
             }
         }
     }
-
+    
     float weight_vals[kWidth];
     #pragma unroll
     for (int i = 0; i < kWidth; ++i) { weight_vals[i] = weight[i * params.weight_width_stride]; }
-
+        
     float dweight_vals[kWidth] = {0};
     float dbias_val = 0;
 
@@ -132,7 +132,7 @@ void causal_conv1d_bwd_kernel(ConvParamsBwd params) {
             Ktraits::BlockLoadVecT(smem_load_vec).Load(reinterpret_cast<vec_t*>(x), *reinterpret_cast<vec_t (*)[1]>(&x_vals_load[kNElts]), (params.seqlen - chunk * kChunkSize) / kNElts);
             Ktraits::BlockLoadVecT(smem_load_vec).Load(reinterpret_cast<vec_t*>(dout), *reinterpret_cast<vec_t (*)[1]>(&dout_vals_load[0]), (params.seqlen - chunk * kChunkSize) / kNElts);
             if (kHasSeqPosIdx)
-                Ktraits::BlockLoadIndexVecT(smem_load_index_vec).Load(reinterpret_cast<int4*>(seq_pos_idx), *reinterpret_cast<int4(*)[Ktraits::kNExchangeRounds]>(&seq_pos_idx_load[0]), (params.seqlen - chunk * kChunkSize) / kNElts);        
+                Ktraits::BlockLoadIndexVecT(smem_load_index_vec).Load(reinterpret_cast<int4*>(seq_pos_idx), *reinterpret_cast<int4(*)[Ktraits::kNExchangeRounds]>(&seq_pos_idx_load[0]), (params.seqlen - chunk * kChunkSize) / kNElts * Ktraits::kNExchangeRounds);
         } else {
             __syncthreads();
             Ktraits::BlockLoadT(smem_load).Load(x, *reinterpret_cast<input_t (*)[kNElts]>(&x_vals_load[kNElts]), params.seqlen - chunk * kChunkSize);
@@ -253,7 +253,6 @@ void causal_conv1d_bwd_kernel(ConvParamsBwd params) {
 
 
 
-
         dout -= kChunkSize;
         x -= kChunkSize; 
         #pragma unroll
@@ -282,15 +281,12 @@ void causal_conv1d_bwd_kernel(ConvParamsBwd params) {
             Ktraits::BlockStoreT(smem_store).Store(dx, dx_vals_store, params.seqlen - chunk * kChunkSize);
         }
         dx -= kChunkSize;
-        // printf("blockIdx.x:%d, blockIdx.y:%d, threadIdx.x:%d \t seq_pos_idx_load:%d %d %d %d %d %d %d %d\n",blockIdx.x, blockIdx.y,threadIdx.x,
-        // seq_pos_idx_load[0], seq_pos_idx_load[1],seq_pos_idx_load[2],seq_pos_idx_load[3],seq_pos_idx_load[4],seq_pos_idx_load[5],seq_pos_idx_load[6],seq_pos_idx_load[7]);
         #pragma unroll
         for (int w = 0; w < kWidth; ++w) {
             #pragma unroll
             for (int i = 0; i < kNElts; ++i) {
                 if (kHasSeqPosIdx){
-                    if(seq_pos_idx_load[i + kWidth - w - 1] < (kWidth - w - 1)){
-                        // printf("bingo ! blockIdx.x:%d, blockIdx.y:%d, threadIdx.x:%d \t seq_pos_idx_load[i]: %d < (kWidth - w - 1) : %d  - %d - 1\n",blockIdx.x, blockIdx.y,threadIdx.x, seq_pos_idx_load[i], kWidth,w);
+                if(seq_pos_idx_load[i + kWidth - w - 1] < (kWidth - w - 1)){
                         continue;
                     }
                 }
