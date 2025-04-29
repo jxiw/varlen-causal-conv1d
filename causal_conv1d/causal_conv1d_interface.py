@@ -15,6 +15,7 @@ class CausalConv1dFn(torch.autograd.Function):
         weight,
         bias=None,
         seq_idx=None,
+        seq_pos_idx=None,
         initial_states=None,
         return_final_states=False,
         final_states_out=None,
@@ -33,6 +34,7 @@ class CausalConv1dFn(torch.autograd.Function):
                 not return_final_states
             ), "If seq_idx is not None, we don't return final_states_out"
         seq_idx = seq_idx.contiguous() if seq_idx is not None else None
+        seq_pos_idx = seq_pos_idx.contiguous() if seq_pos_idx is not None else None
         if initial_states is not None and (
             initial_states.stride(2) != 1 and initial_states.stride(1) != 1
         ):
@@ -55,9 +57,9 @@ class CausalConv1dFn(torch.autograd.Function):
             final_states_out = None
         ctx.activation = activation in ["silu", "swish"]
         out = causal_conv1d_cuda.causal_conv1d_fwd(
-            x, weight, bias, seq_idx, initial_states, final_states_out, ctx.activation
+            x, weight, bias, seq_idx, seq_pos_idx, initial_states, final_states_out, ctx.activation
         )
-        ctx.save_for_backward(x, weight, bias, seq_idx, initial_states)
+        ctx.save_for_backward(x, weight, bias, seq_idx, seq_pos_idx, initial_states)
         ctx.return_final_states = return_final_states
         ctx.return_dinitial_states = (
             initial_states is not None and initial_states.requires_grad
@@ -66,7 +68,7 @@ class CausalConv1dFn(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dout, *args):
-        x, weight, bias, seq_idx, initial_states = ctx.saved_tensors
+        x, weight, bias, seq_idx, seq_pos_idx, initial_states = ctx.saved_tensors
         dfinal_states = args[0] if ctx.return_final_states else None
         if dout.stride(2) != 1 and dout.stride(1) != 1:
             dout = dout.contiguous()
@@ -79,6 +81,7 @@ class CausalConv1dFn(torch.autograd.Function):
             bias,
             dout,
             seq_idx,
+            seq_pos_idx,
             initial_states,
             dfinal_states,
             None,
@@ -89,6 +92,7 @@ class CausalConv1dFn(torch.autograd.Function):
             dx,
             dweight,
             dbias if bias is not None else None,
+            None,
             None,
             dinitial_states if initial_states is not None else None,
             None,
@@ -102,6 +106,7 @@ def causal_conv1d_fn(
     weight,
     bias=None,
     seq_idx=None,
+    seq_pos_idx=None,
     initial_states=None,
     return_final_states=False,
     final_states_out=None,
@@ -112,6 +117,7 @@ def causal_conv1d_fn(
     weight: (dim, width)
     bias: (dim,)
     seq_idx: (batch, seqlen)
+    seq_pos_idx: (batch, seqlen)
     initial_states: (batch, dim, width - 1)
     final_states_out: (batch, dim, width - 1), to be written to
     activation: either None or "silu" or "swish"
@@ -123,6 +129,7 @@ def causal_conv1d_fn(
         weight,
         bias,
         seq_idx,
+        seq_pos_idx,
         initial_states,
         return_final_states,
         final_states_out,
